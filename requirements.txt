@@ -1,0 +1,8 @@
+polygon-api-client>=1.14.0
+pandas>=2.2.0
+pyarrow>=16.0.0
+pyyaml>=6.0.1
+python-dotenv>=1.0.1
+tqdm>=4.66.0
+pytz>=2024.1
+loguru>=0.7.2

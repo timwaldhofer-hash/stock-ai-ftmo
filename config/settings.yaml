@@ -1,0 +1,61 @@
+# ============================================================
+# AI-Trading-System — Konfiguration
+# ============================================================
+
+polygon:
+  api_key_env: POLYGON_API_KEY          # Name der .env-Variable
+
+data:
+  raw_1m_dir: data/raw/1m
+  processed_5m_dir: data/processed/5m
+  metadata_dir: data/metadata
+  symbol_universe_file: data/metadata/symbol_universe.csv
+
+# Download-Zeitraum: 2.5 Jahre für 18-Monate-Walk-Forward + 6 Monate Training-Puffer
+download:
+  start_date: "2022-11-01"
+  end_date: "2025-04-30"
+
+trading:
+  timezone: America/New_York
+  session_start: "09:30"
+  session_end: "16:00"
+  no_new_trades_before_close_min: 30    # keine neuen Trades nach 15:30
+  close_all_trades_before_close_min: 10 # alle Trades bis 15:50 schließen
+
+backtest:
+  start_date: "2023-05-01"
+  end_date: "2024-10-31"
+  period_months: 18
+
+training:
+  training_window_months: 6
+  retrain_frequency: monthly
+
+risk:
+  max_daily_loss_pct: 3.50
+  max_stop_distance_pct: 2.00
+  minimum_position_size_pct: 5.00
+
+costs:
+  fee_pct: 0.005
+  slippage_bps: 3                       # 0.03 %
+
+ai:
+  main_ai_threshold_normal: 0.70
+  main_ai_threshold_earnings: 0.85
+  independent_ai_threshold_normal: 0.60
+  independent_ai_threshold_earnings: 0.70
+  min_expected_move_normal_pct: 0.20
+  min_expected_move_earnings_pct: 0.30
+
+# Low-Timeframe Entry-Filter (optional, Etappe 5+)
+ltf:
+  use_ltf_confirmation: false
+  ltf_use_micro_structure: true
+  ltf_use_bad_candle_filter: true
+
+# Logging
+logging:
+  log_dir: logs
+  level: INFO
