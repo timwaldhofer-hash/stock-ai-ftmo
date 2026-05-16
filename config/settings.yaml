@@ -8,6 +8,7 @@ polygon:
 data:
   raw_1m_dir: data/raw/1m
   processed_5m_dir: data/processed/5m
+  features_5m_dir: data/features/5m
   metadata_dir: data/metadata
   symbol_universe_file: data/metadata/symbol_universe.csv
 
