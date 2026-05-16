@@ -48,7 +48,6 @@ def setup_logging(log_dir: Path) -> logging.Logger:
 def load_symbols(path: Path) -> list[str]:
     df = pd.read_csv(path)
     raw = df["symbol"].dropna().str.strip().tolist()
-    # Entferne offensichtliche Tippfehler (Trailing-s bei Tickern über 4 Zeichen)
     cleaned = []
     for s in raw:
         if len(s) > 5:
@@ -61,7 +60,7 @@ def load_symbols(path: Path) -> list[str]:
 
 
 def month_ranges(start: date, end: date):
-    """Liefert (monat_start, monat_end)-Tupel für den Zeitraum start..end."""
+    """Yields (month_start, month_end) tuples covering start..end."""
     current = start.replace(day=1)
     while current <= end:
         last_day = calendar.monthrange(current.year, current.month)[1]
@@ -72,18 +71,18 @@ def month_ranges(start: date, end: date):
             current = current.replace(month=current.month + 1)
 
 
-def get_last_date(parquet_path: Path) -> date | None:
-    """Gibt das letzte Datum einer existierenden Parquet-Datei zurück."""
+def get_date_range(parquet_path: Path) -> tuple[date, date] | None:
+    """Returns (min_date, max_date) from an existing parquet file, or None."""
     if not parquet_path.exists():
         return None
     try:
         df = pd.read_parquet(parquet_path, columns=["timestamp"])
         if df.empty:
             return None
-        ts = pd.to_datetime(df["timestamp"]).max()
-        return ts.date() if hasattr(ts, "date") else None
+        ts = pd.to_datetime(df["timestamp"])
+        return ts.min().date(), ts.max().date()
     except Exception as e:
-        logging.getLogger("download").warning(f"Konnte {parquet_path} nicht lesen: {e}")
+        logging.getLogger("download").warning(f"Could not read {parquet_path}: {e}")
         return None
 
 
@@ -91,7 +90,7 @@ def bars_to_dataframe(bars: list) -> pd.DataFrame:
     records = []
     for b in bars:
         records.append({
-            "timestamp": b.timestamp,   # Millisekunden seit Epoch UTC
+            "timestamp": b.timestamp,   # milliseconds since epoch UTC
             "open": b.open,
             "high": b.high,
             "low": b.low,
@@ -113,58 +112,79 @@ def download_symbol(
     out_path: Path,
     log: logging.Logger,
 ) -> bool:
-    last_date = get_last_date(out_path)
-    effective_start = start
+    existing_range = get_date_range(out_path)
 
-    if last_date is not None:
-        effective_start = last_date + timedelta(days=1)
-        if effective_start > end:
-            log.info(f"{symbol}: bereits aktuell (letzter Tag: {last_date})")
+    if existing_range is not None:
+        existing_start, existing_end = existing_range
+        log.info(
+            f"{symbol}: existing range {existing_start} -> {existing_end} | "
+            f"requested range {start} -> {end}"
+        )
+    else:
+        existing_start = existing_end = None
+        log.info(f"{symbol}: no existing data | requested range {start} -> {end}")
+
+    # Determine which date ranges need downloading
+    ranges_to_download: list[tuple[date, date]] = []
+
+    if existing_range is None:
+        ranges_to_download.append((start, end))
+    else:
+        if start < existing_start:
+            backfill_end = existing_start - timedelta(days=1)
+            log.info(f"{symbol}: backfill needed {start} -> {backfill_end}")
+            ranges_to_download.append((start, backfill_end))
+        if end > existing_end:
+            forward_start = existing_end + timedelta(days=1)
+            log.info(f"{symbol}: forward update needed {forward_start} -> {end}")
+            ranges_to_download.append((forward_start, end))
+        if not ranges_to_download:
+            log.info(f"{symbol}: already complete for requested range, skipping")
             return True
 
-    log.info(f"{symbol}: lade {effective_start} -> {end}")
     new_bars: list = []
     failed_months: list = []
 
-    for month_start, month_end in month_ranges(effective_start, end):
-        try:
-            bars = list(
-                client.list_aggs(
-                    symbol,
-                    multiplier=1,
-                    timespan="minute",
-                    from_=month_start.isoformat(),
-                    to=month_end.isoformat(),
-                    adjusted=True,
-                    sort="asc",
-                    limit=50000,
+    for dl_start, dl_end in ranges_to_download:
+        for month_start, month_end in month_ranges(dl_start, dl_end):
+            try:
+                bars = list(
+                    client.list_aggs(
+                        symbol,
+                        multiplier=1,
+                        timespan="minute",
+                        from_=month_start.isoformat(),
+                        to=month_end.isoformat(),
+                        adjusted=True,
+                        sort="asc",
+                        limit=50000,
+                    )
                 )
-            )
-            if bars:
-                new_bars.extend(bars)
-                log.debug(f"  {symbol} {month_start}: {len(bars)} Bars")
-            else:
-                log.warning(f"  {symbol} {month_start}: keine Daten")
-        except Exception as e:
-            log.error(f"  {symbol} {month_start}: Download fehlgeschlagen -- {e}")
-            failed_months.append(month_start)
+                if bars:
+                    new_bars.extend(bars)
+                    log.debug(f"  {symbol} {month_start}: {len(bars)} bars")
+                else:
+                    log.warning(f"  {symbol} {month_start}: no data")
+            except Exception as e:
+                log.error(f"  {symbol} {month_start}: download failed -- {e}")
+                failed_months.append(month_start)
 
     if not new_bars:
         if failed_months:
-            log.error(f"{symbol}: alle Downloads fehlgeschlagen")
+            log.error(f"{symbol}: all downloads failed")
             return False
-        log.warning(f"{symbol}: keine neuen Bars (möglicherweise kein Handel in diesem Zeitraum)")
+        log.warning(f"{symbol}: no new bars (possibly no trading in requested period)")
         return True
 
     df_new = bars_to_dataframe(new_bars)
 
-    # Mit vorhandenen Daten zusammenführen
-    if out_path.exists() and last_date is not None:
+    # Merge with existing data; existing data is never deleted
+    if out_path.exists() and existing_range is not None:
         try:
             df_existing = pd.read_parquet(out_path)
             df = pd.concat([df_existing, df_new], ignore_index=True)
         except Exception as e:
-            log.warning(f"{symbol}: Zusammenführen fehlgeschlagen, überschreibe Datei: {e}")
+            log.warning(f"{symbol}: merge failed, overwriting file: {e}")
             df = df_new
     else:
         df = df_new
@@ -173,7 +193,7 @@ def download_symbol(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path, index=False)
-    log.info(f"{symbol}: {len(df):,} Bars gespeichert -> {out_path.name}")
+    log.info(f"{symbol}: {len(df):,} bars saved -> {out_path.name}")
     return True
 
 
