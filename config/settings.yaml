@@ -28,6 +28,8 @@ backtest:
   start_date: "2023-05-01"
   end_date: "2024-10-31"
   period_months: 18
+  initial_account: 100000
+  rule_based_dir: data/backtests/rule_based
 
 training:
   training_window_months: 6
@@ -37,6 +39,7 @@ risk:
   max_daily_loss_pct: 3.50
   max_stop_distance_pct: 2.00
   minimum_position_size_pct: 5.00
+  risk_pct_per_trade: 1.00
 
 costs:
   fee_pct: 0.005
