@@ -53,6 +53,11 @@ ai:
   min_expected_move_normal_pct: 0.20
   min_expected_move_earnings_pct: 0.30
 
+dataset:
+  output_dir: data/datasets
+  profit_threshold_normal_pct: 0.20      # label=1 threshold for normal setups
+  profit_threshold_earnings_pct: 0.30    # label=1 threshold for earnings setups (placeholder)
+
 # Low-Timeframe Entry-Filter (optional, Etappe 5+)
 ltf:
   use_ltf_confirmation: false
