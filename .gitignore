@@ -45,7 +45,7 @@ Thumbs.db
 *.ipynb
 
 # Models and artifacts
-models/
+/models/
 artifacts/
 *.pkl
 *.joblib
