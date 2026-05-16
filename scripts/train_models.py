@@ -38,6 +38,11 @@ import numpy as np
 import pandas as pd
 import yaml
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+
+try:
+    from sklearn.frozen import FrozenEstimator
+except ImportError:
+    FrozenEstimator = None
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
@@ -144,13 +149,17 @@ def train_model(
     max_depth: int,
 ) -> CalibratedClassifierCV:
     """
-    Fit a GradientBoosting pipeline, then apply Platt scaling on the
-    calibration set (cv='prefit' avoids any temporal leakage from CV folds).
+    Fit a GradientBoosting pipeline on X_fit, then apply Platt scaling on the
+    held-out calibration set to avoid any temporal leakage from CV folds.
+    Uses FrozenEstimator (sklearn>=1.6) when available; falls back to cv='prefit'.
     """
     pipeline = _build_base_pipeline(n_estimators, learning_rate, max_depth)
     pipeline.fit(X_fit, y_fit)
 
-    calibrated = CalibratedClassifierCV(pipeline, cv="prefit", method="sigmoid")
+    if FrozenEstimator is not None:
+        calibrated = CalibratedClassifierCV(FrozenEstimator(pipeline), method="sigmoid")
+    else:
+        calibrated = CalibratedClassifierCV(pipeline, cv="prefit", method="sigmoid")
     calibrated.fit(X_cal, y_cal)
     return calibrated
 
@@ -160,7 +169,9 @@ def _extract_feature_importances(
     feature_names: list,
 ) -> dict:
     try:
-        base_pipeline = model.calibrated_classifiers_[0].estimator
+        inner = model.calibrated_classifiers_[0].estimator
+        # Unwrap FrozenEstimator if present (sklearn>=1.6 calibration path)
+        base_pipeline = getattr(inner, "estimator", inner)
         clf = base_pipeline.named_steps["clf"]
         importances = clf.feature_importances_
         ranked = sorted(
@@ -295,7 +306,7 @@ def main() -> None:
         f"Loaded {len(df)} samples | "
         f"label=1 rate: {df['label'].mean():.3f} | "
         f"symbols: {df['symbol'].nunique()} | "
-        f"date range: {df['timestamp'].min().date()} – {df['timestamp'].max().date()}"
+        f"date range: {df['timestamp'].min().date()} to {df['timestamp'].max().date()}"
     )
 
     # ── Time-based split (masks applied before feature engineering) ────────
@@ -303,7 +314,7 @@ def main() -> None:
 
     def _ts_range(mask: pd.Series) -> str:
         sub = df.loc[mask, "timestamp"]
-        return f"{sub.min().date()} – {sub.max().date()}"
+        return f"{sub.min().date()} to {sub.max().date()}"
 
     split_dates = {
         "fit": _ts_range(fit_mask),
@@ -311,7 +322,7 @@ def main() -> None:
         "test": _ts_range(test_mask),
     }
     log.info(
-        f"Split → fit: {fit_mask.sum()} ({split_dates['fit']}) | "
+        f"Split -> fit: {fit_mask.sum()} ({split_dates['fit']}) | "
         f"cal: {cal_mask.sum()} ({split_dates['calibration']}) | "
         f"test: {test_mask.sum()} ({split_dates['test']})"
     )
@@ -325,13 +336,13 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     # Main AI Model
     # ══════════════════════════════════════════════════════════════════════
-    log.info("─" * 60)
-    log.info("Training Main AI (full feature set, threshold=%.2f) …", main_threshold)
+    log.info("-" * 60)
+    log.info("Training Main AI (full feature set, threshold=%.2f) ...", main_threshold)
 
     feat_main = [f for f in MAIN_AI_FEATURES if f in df.columns]
     missing_main = set(MAIN_AI_FEATURES) - set(feat_main)
     if missing_main:
-        log.warning("Main AI — missing features skipped: %s", sorted(missing_main))
+        log.warning("Main AI - missing features skipped: %s", sorted(missing_main))
 
     X_main = df[feat_main]
 
@@ -361,21 +372,21 @@ def main() -> None:
         _MODELS_DIR / "main_ai_meta.json",
     )
     save_report(main_report, _REPORTS_DIR / "main_ai_report.json")
-    log.info("Saved → models/main_ai.pkl  |  data/model_reports/main_ai_report.json")
+    log.info("Saved -> models/main_ai.pkl  |  data/model_reports/main_ai_report.json")
 
     # ══════════════════════════════════════════════════════════════════════
     # Independent AI Model
     # ══════════════════════════════════════════════════════════════════════
-    log.info("─" * 60)
+    log.info("-" * 60)
     log.info(
-        "Training Independent AI (microstructure subset, threshold=%.2f) …",
+        "Training Independent AI (microstructure subset, threshold=%.2f) ...",
         indep_threshold,
     )
 
     feat_indep = [f for f in INDEPENDENT_AI_FEATURES if f in df.columns]
     missing_indep = set(INDEPENDENT_AI_FEATURES) - set(feat_indep)
     if missing_indep:
-        log.warning("Independent AI — missing features skipped: %s", sorted(missing_indep))
+        log.warning("Independent AI - missing features skipped: %s", sorted(missing_indep))
 
     X_indep = df[feat_indep]
 
@@ -406,11 +417,11 @@ def main() -> None:
     )
     save_report(indep_report, _REPORTS_DIR / "independent_ai_report.json")
     log.info(
-        "Saved → models/independent_ai.pkl  |  "
+        "Saved -> models/independent_ai.pkl  |  "
         "data/model_reports/independent_ai_report.json"
     )
 
-    log.info("─" * 60)
+    log.info("-" * 60)
     log.info("Training complete.")
 
 
