@@ -50,3 +50,12 @@ artifacts/
 *.pkl
 *.joblib
 *.h5
+
+# Generated data and model outputs
+data/raw/
+data/processed/
+data/features/
+data/datasets/
+data/model_reports/
+data/backtests/
+models/
